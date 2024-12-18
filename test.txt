@@ -1,17 +1,16 @@
 import os
-import zipfile
-import numpy as np
-import matplotlib.pyplot as plt
-import random
 import json
-from sklearn.model_selection import train_test_split
-from tensorflow.keras.callbacks import LambdaCallback
-import tensorflow.keras as keras
-from tensorflow.keras.models import Sequential, load_model
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Input
-from tensorflow.keras.utils import to_categorical
-from tensorflow.keras.callbacks import ModelCheckpoint
+import random
+import numpy as np
 from PIL import Image
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Input, Dropout
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, LambdaCallback
+from tensorflow.keras.regularizers import l2
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+import tensorflow.keras as keras
 from google.colab import drive
 drive.mount('/content/drive')
 SAVE_DIR = '/content/drive/MyDrive/saved_model_results/'
@@ -42,16 +41,32 @@ def custom_image_generator(dataset_path, batch_size, image_size=(28, 28), shuffl
                 batch_images.append(np.array(img) / 255.0)
                 batch_labels.append(label)
             yield np.expand_dims(np.array(batch_images), -1), to_categorical(batch_labels, num_classes=len(class_labels))
+datagen = ImageDataGenerator(
+    rotation_range=15,
+    width_shift_range=0.1,
+    height_shift_range=0.1,
+    shear_range=0.1,
+    zoom_range=0.1,
+    horizontal_flip=False,
+    fill_mode='nearest'
+)
 BATCH_SIZE = 32
-train_generator = custom_image_generator(DATASET_PATH, batch_size=BATCH_SIZE)
+train_generator = datagen.flow_from_directory(
+    DATASET_PATH,
+    target_size=(28, 28),
+    batch_size=BATCH_SIZE,
+    class_mode='categorical',
+    color_mode='grayscale'
+)
 validation_generator = custom_image_generator(DATASET_PATH, batch_size=BATCH_SIZE)
 model = Sequential([
     Input(shape=(28, 28, 1)),
-    Conv2D(32, (3, 3), activation='relu'),
+    Conv2D(32, (3, 3), activation='relu', kernel_regularizer=l2(0.001)),
     MaxPooling2D((2, 2)),
-    Conv2D(64, (3, 3), activation='relu'),
+    Conv2D(64, (3, 3), activation='relu', kernel_regularizer=l2(0.001)),
     MaxPooling2D((2, 2)),
     Flatten(),
+    Dropout(0.5),
     Dense(128, activation='relu'),
     Dense(len(os.listdir(DATASET_PATH)), activation='softmax')
 ])
@@ -72,6 +87,11 @@ else:
 def save_last_epoch(epoch):
     with open(last_epoch_path, 'w') as f:
         f.write(str(epoch + 1))
+early_stopping = EarlyStopping(
+    monitor='val_loss',
+    patience=3,
+    restore_best_weights=True
+)
 total_images = sum(len(files) for _, _, files in os.walk(DATASET_PATH) if files)
 steps_per_epoch = total_images // BATCH_SIZE
 validation_steps = total_images // (BATCH_SIZE * 5)
@@ -93,6 +113,7 @@ history = model.fit(
     initial_epoch=initial_epoch,
     callbacks=[
         checkpoint_callback,
+        early_stopping,
         keras.callbacks.LambdaCallback(on_epoch_end=lambda epoch, logs: save_last_epoch(epoch))
     ]
 )
