@@ -20,12 +20,31 @@ last_epoch_path = os.path.join(SAVE_DIR, 'last_epoch.txt')
 EXTRACTED_PATH = "/content/sample_data/my_class/by_class"
 DATASET_PATH = EXTRACTED_PATH
 def custom_image_generator(dataset_path, batch_size, image_size=(28, 28), shuffle=True, seed=42):
-    # Function to generate batches of images and labels on-the-fly.
-
+    random.seed(seed)
+    class_folders = [os.path.join(dataset_path, label) for label in os.listdir(dataset_path)]
+    class_labels = {label: idx for idx, label in enumerate(os.listdir(dataset_path))}
+    all_images = []
+    for class_folder in class_folders:
+        img_files = [
+            os.path.join(root, file)
+            for root, _, files in os.walk(class_folder)
+            for file in files if file.endswith(".png")
+        ]
+        all_images.extend((img, class_labels[os.path.basename(class_folder)]) for img in img_files)
+    while True:
+        if shuffle:
+            random.shuffle(all_images)
+        for i in range(0, len(all_images), batch_size):
+            batch_images, batch_labels = [], []
+            batch_data = all_images[i:i + batch_size]
+            for img_path, label in batch_data:
+                img = Image.open(img_path).convert('L').resize(image_size)
+                batch_images.append(np.array(img) / 255.0)
+                batch_labels.append(label)
+            yield np.expand_dims(np.array(batch_images), -1), to_categorical(batch_labels, num_classes=len(class_labels))
 BATCH_SIZE = 32
 train_generator = custom_image_generator(DATASET_PATH, batch_size=BATCH_SIZE)
 validation_generator = custom_image_generator(DATASET_PATH, batch_size=BATCH_SIZE)
-
 model = Sequential([
     Input(shape=(28, 28, 1)),
     Conv2D(32, (3, 3), activation='relu'),
@@ -64,6 +83,7 @@ checkpoint_callback = ModelCheckpoint(
     mode='min',
     verbose=1
 )
+print("Training the model...")
 history = model.fit(
     train_generator,
     steps_per_epoch=steps_per_epoch,
@@ -79,8 +99,11 @@ history = model.fit(
 history_path = os.path.join(SAVE_DIR, 'training_history.json')
 with open(history_path, 'w') as f:
     json.dump(history.history, f)
+print(f"Training history saved to: {history_path}")
+print("Evaluating the model...")
 test_loss, test_accuracy = model.evaluate(validation_generator, steps=validation_steps)
 print(f"Test Accuracy: {test_accuracy * 100:.2f}%")
 results_path = os.path.join(SAVE_DIR, 'evaluation_results.json')
 with open(results_path, 'w') as f:
     json.dump({'Test Loss': test_loss, 'Test Accuracy': test_accuracy}, f)
+print(f"Evaluation results saved to: {results_path}")
