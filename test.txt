@@ -1,0 +1,86 @@
+import os
+import zipfile
+import numpy as np
+import matplotlib.pyplot as plt
+import random
+import json
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.callbacks import LambdaCallback
+import tensorflow.keras as keras
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Input
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.callbacks import ModelCheckpoint
+from PIL import Image
+from google.colab import drive
+drive.mount('/content/drive')
+SAVE_DIR = '/content/drive/MyDrive/saved_model_results/'
+os.makedirs(SAVE_DIR, exist_ok=True)
+last_epoch_path = os.path.join(SAVE_DIR, 'last_epoch.txt')
+EXTRACTED_PATH = "/content/sample_data/my_class/by_class"
+DATASET_PATH = EXTRACTED_PATH
+def custom_image_generator(dataset_path, batch_size, image_size=(28, 28), shuffle=True, seed=42):
+    # Function to generate batches of images and labels on-the-fly.
+
+BATCH_SIZE = 32
+train_generator = custom_image_generator(DATASET_PATH, batch_size=BATCH_SIZE)
+validation_generator = custom_image_generator(DATASET_PATH, batch_size=BATCH_SIZE)
+
+model = Sequential([
+    Input(shape=(28, 28, 1)),
+    Conv2D(32, (3, 3), activation='relu'),
+    MaxPooling2D((2, 2)),
+    Conv2D(64, (3, 3), activation='relu'),
+    MaxPooling2D((2, 2)),
+    Flatten(),
+    Dense(128, activation='relu'),
+    Dense(len(os.listdir(DATASET_PATH)), activation='softmax')
+])
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+checkpoint_path = os.path.join(SAVE_DIR, 'latest_checkpoint.keras')
+if os.path.exists(checkpoint_path):
+    print(f"Checkpoint found. Loading model from {checkpoint_path}")
+    model = load_model(checkpoint_path)
+else:
+    print("No checkpoint found. Starting training from scratch.")
+if os.path.exists(last_epoch_path):
+    with open(last_epoch_path, 'r') as f:
+        initial_epoch = int(f.read().strip())
+    print(f"Resuming training from epoch {initial_epoch + 1}")
+else:
+    initial_epoch = 0
+    print("Starting training from epoch 1")
+def save_last_epoch(epoch):
+    with open(last_epoch_path, 'w') as f:
+        f.write(str(epoch + 1))
+total_images = sum(len(files) for _, _, files in os.walk(DATASET_PATH) if files)
+steps_per_epoch = total_images // BATCH_SIZE
+validation_steps = total_images // (BATCH_SIZE * 5)
+checkpoint_callback = ModelCheckpoint(
+    filepath=checkpoint_path,
+    save_weights_only=False,
+    save_best_only=False,
+    monitor='val_loss',
+    mode='min',
+    verbose=1
+)
+history = model.fit(
+    train_generator,
+    steps_per_epoch=steps_per_epoch,
+    validation_data=validation_generator,
+    validation_steps=validation_steps,
+    epochs=10,
+    initial_epoch=initial_epoch,
+    callbacks=[
+        checkpoint_callback,
+        keras.callbacks.LambdaCallback(on_epoch_end=lambda epoch, logs: save_last_epoch(epoch))
+    ]
+)
+history_path = os.path.join(SAVE_DIR, 'training_history.json')
+with open(history_path, 'w') as f:
+    json.dump(history.history, f)
+test_loss, test_accuracy = model.evaluate(validation_generator, steps=validation_steps)
+print(f"Test Accuracy: {test_accuracy * 100:.2f}%")
+results_path = os.path.join(SAVE_DIR, 'evaluation_results.json')
+with open(results_path, 'w') as f:
+    json.dump({'Test Loss': test_loss, 'Test Accuracy': test_accuracy}, f)
